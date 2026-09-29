@@ -1,0 +1,384 @@
+<!-- ===== MÀN HÌNH NHẬP TÊN ===== -->
+<div class="login-overlay" *ngIf="!nameEntered">
+  <div class="login-card">
+    <div class="login-logo">
+      <div class="logo-icon">T</div>
+    </div>
+    <h1>Chat nhóm</h1>
+    <p class="login-subtitle">Nhập tên hiển thị để bắt đầu trò chuyện</p>
+    <input
+      type="text"
+      class="login-input"
+      [(ngModel)]="nameInput"
+      (keydown.enter)="submitName()"
+      placeholder="Tên của bạn..."
+      maxlength="30"
+      autofocus
+    />
+    <input
+      type="password"
+      class="login-input"
+      [(ngModel)]="adminPasswordInput"
+      (keydown.enter)="submitName()"
+      placeholder="Mật khẩu quản trị (tuỳ chọn)"
+      maxlength="30"
+    />
+    <button class="login-btn" (click)="submitName()" [disabled]="!nameInput.trim()">
+      Vào chat
+    </button>
+  </div>
+</div>
+
+<!-- ===== GIAO DIỆN CHÍNH ===== -->
+<!-- Bố cục: [chrome-sidebar (dán ảnh)] + [chrome-header (dán ảnh) trên / chat-frame (thật) dưới] -->
+<div class="app-shell" *ngIf="nameEntered">
+
+  <!-- Vùng SIDEBAR — dán ảnh vào đây để thay giao diện thật (Ctrl+V khi đã click vào vùng này) -->
+  <div class="chrome-sidebar">
+    <img src="sidebar-image.png" class="chrome-image" alt="Sidebar" />
+  </div>
+
+  <div class="right-column">
+    <!-- Vùng HEADER — dán ảnh vào đây để thay giao diện thật -->
+    <div class="chrome-header">
+      <img src="header12.png" class="chrome-image" alt="Header" />
+    </div>
+
+    <!-- ===== KHUNG CHAT THẬT (góc dưới bên phải) ===== -->
+    <div class="chat-frame">
+      <ng-container *ngIf="currentChannelId; else noChannelSelected">
+
+        <!-- Header phòng hiện tại -->
+        <div class="chat-header">
+          <div class="chat-header-title">
+            <span class="channel-hash">#</span>
+            <h2>{{ currentChannelName }}</h2>
+          </div>
+          <div class="chat-header-actions">
+            <button class="icon-btn" (click)="toggleMembersPanel()" [class.active]="showMembersPanel" title="Thành viên">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 2a5 5 0 100 10 5 5 0 000-10zM4 20c0-3.3 3.6-6 8-6s8 2.7 8 6v1H4v-1z"/></svg>
+              <span>{{ members.length }}</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="chat-body">
+          <!-- Danh sách tin nhắn -->
+          <div class="messages-container" #messagesEl (scroll)="onMessagesScroll()">
+            <div class="messages-loading" *ngIf="isLoadingChannel">Đang tải...</div>
+
+            <div class="message-empty" *ngIf="!isLoadingChannel && !messages.length">
+              <p>👋 Chưa có tin nhắn nào trong phòng này</p>
+              <p class="hint">Hãy là người đầu tiên gửi lời chào!</p>
+            </div>
+
+            <ng-container *ngFor="let m of messages; let i = index">
+              <div class="date-separator" *ngIf="shouldShowDateSeparator(i)">
+                <span>{{ getDateSeparatorLabel(m.time) }}</span>
+              </div>
+
+              <!-- ===== TIN NHẮN HỆ THỐNG (Vào/Rời phòng) ===== -->
+              <div class="system-message" *ngIf="m.type === 'system'">
+                <span>{{ m.text }}</span>
+              </div>
+
+              <!-- ===== TIN NHẮN NGƯỜI DÙNG ===== -->
+              <div
+                *ngIf="m.type !== 'system'"
+                class="message-row"
+                [id]="'msg-' + m.id"
+                [class.own]="isMine(m)"
+                [class.grouped]="isSameSenderAsPrevious(i)"
+                (mouseenter)="hoveredMessageId = m.id"
+                (mouseleave)="hoveredMessageId = null; reactionPickerFor = null"
+              >
+                <!-- Avatar có kèm tích xanh -->
+                <div class="avatar-container" *ngIf="!isMine(m) && !isSameSenderAsPrevious(i)">
+                  <div class="message-avatar" [style.background]="getAvatarColor(m.userName)">
+                    {{ getInitials(m.userName) }}
+                  </div>
+                  <div class="status-tick">
+                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg>
+                  </div>
+                </div>
+                
+                <div class="message-avatar-spacer" *ngIf="!isMine(m) && isSameSenderAsPrevious(i)"></div>
+
+                <div class="message-content">
+                  <!-- Thanh hành động -->
+                  <div class="message-actions" *ngIf="hoveredMessageId === m.id && editingMessageId !== m.id && (!m.deleted || isMine(m) || isAdmin)">
+                    <ng-container *ngIf="!m.deleted">
+                      <button class="quick-react-btn" *ngFor="let e of quickReactions" (click)="pickReaction(m, e)">{{ e }}</button>
+                      <button class="action-btn" title="Thêm reaction khác" (click)="toggleReactionPicker(m.id)">
+                        <span class="add-react-icon">➕</span>
+                      </button>
+                      <button class="action-btn" title="Trả lời" (click)="startReply(m)">↩</button>
+                      <button class="action-btn" title="Sửa" *ngIf="isMine(m) || isAdmin" (click)="startEdit(m)">✐</button>
+                    </ng-container>
+
+                    <!-- Hoàn tác xóa: chủ tin nhắn (tin của mình) hoặc admin (tin của mọi người) -->
+                    <button class="action-btn" title="Hoàn tác xóa" *ngIf="m.deleted && (isMine(m) || isAdmin)" (click)="restoreMessage(m)">↩️</button>
+
+                    <!-- Xóa tạm thời (vẫn hoàn tác được): chủ tin nhắn hoặc admin -->
+                    <button class="action-btn" title="Xóa (tạm thời, có thể hoàn tác)" *ngIf="!m.deleted && (isMine(m) || isAdmin)" (click)="deleteMessage(m)">🗑</button>
+
+                    <!-- Xóa hẳn (không hoàn tác được): chỉ admin -->
+                    <button class="action-btn" title="Xóa hẳn (không thể hoàn tác)" *ngIf="isAdmin && !m.deleted" (click)="hardDeleteMessage(m)">⛔</button>
+
+                    <!-- Popup reaction mở rộng (Đã sửa CSS thành Grid 6 cột) -->
+                    <div class="reaction-picker" *ngIf="reactionPickerFor === m.id">
+                      <button *ngFor="let e of extraReactions" (click)="pickReaction(m, e)">{{ e }}</button>
+                    </div>
+                  </div>
+
+                  <!-- Header tin nhắn -->
+                  <div class="message-header" *ngIf="!isSameSenderAsPrevious(i)">
+                    <span class="message-sender" *ngIf="!isMine(m)">{{ m.userName }}</span>
+                    <span class="admin-badge" *ngIf="isAdminSender(m)" title="Quản trị viên">👑</span>
+                    <span class="message-time">{{ formatTime(m.time) }}</span>
+                    <span class="message-edited" *ngIf="m.editedAt">(đã chỉnh sửa)</span>
+                  </div>
+
+                  <!-- Đã bị xóa -->
+                  <div class="message-deleted" *ngIf="m.deleted">
+                    <em>Tin nhắn đã bị xoá</em>
+                  </div>
+
+                  <!-- Khung sửa (contenteditable: giữ định dạng, dán được HTML) -->
+                  <ng-container *ngIf="!m.deleted && editingMessageId === m.id">
+                    <div class="edit-box">
+                      <div
+                        #editInputEl
+                        class="edit-input"
+                        contenteditable="true"
+                        [innerHTML]="editingHtml"
+                        (paste)="onEditBoxPaste($event)"
+                        (keydown)="onEditBoxKeydown($event, m)"
+                      ></div>
+                      <div class="edit-actions">
+                        <span class="edit-hint">Ctrl+Enter: lưu · Esc: hủy</span>
+                        <button class="btn-cancel-small" (click)="cancelEdit()">Hủy</button>
+                        <button class="btn-confirm-small" (click)="submitEdit(m)">Lưu</button>
+                      </div>
+                    </div>
+                  </ng-container>
+
+                  <!-- Nội dung -->
+                  <ng-container *ngIf="!m.deleted && editingMessageId !== m.id">
+                    <div class="reply-quote" *ngIf="m.replyTo" (click)="scrollToMessage(m.replyTo.id)">
+                      <div class="reply-quote-bar"></div>
+                      <div class="reply-quote-body">
+                        <span class="reply-quote-name">{{ m.replyTo.userName }}</span>
+                        <span class="reply-quote-text">{{ m.replyTo.hasImage ? '📷 ' : '' }}{{ m.replyTo.text }}</span>
+                      </div>
+                    </div>
+
+                    <div class="message-bubble" *ngIf="m.text" [innerHTML]="m.text"></div>
+
+                    <img *ngIf="m.imageData" [src]="m.imageData" class="message-image" (click)="openImageViewer(m.imageData)" alt="Ảnh đính kèm" />
+
+                    <!-- Reactions to hơn -->
+                    <div class="reaction-chips" *ngIf="reactionEntries(m).length">
+                      <button class="reaction-chip" *ngFor="let r of reactionEntries(m)" [class.mine]="r.mine" [title]="r.userNames" (click)="pickReaction(m, r.emoji)">
+                        {{ r.emoji }} {{ r.count }}
+                      </button>
+                    </div>
+                  </ng-container>
+                </div>
+
+                
+                <!-- ===== HIỂN THỊ TRẠNG THÁI ĐÃ XEM CỦA NGƯỜI KHÁC ===== -->
+                <div class="read-receipts" *ngIf="getReadersForMessage(m.id).length > 0">
+                  <div class="read-avatar" *ngFor="let reader of getReadersForMessage(m.id)" [style.background]="getAvatarColor(reader.name)" [title]="'Đã xem bởi ' + reader.name">
+                    {{ getInitials(reader.name) }}
+                  </div>
+                </div>
+              </div>
+            </ng-container>
+
+            <div class="typing-indicator" *ngIf="typingNames.length">
+              <span *ngIf="typingNames.length === 1">{{ typingNames[0] }} đang nhập...</span>
+              <span *ngIf="typingNames.length > 1">{{ typingNames.join(', ') }} đang nhập...</span>
+            </div>
+          </div>
+
+          <!-- Panel thành viên -->
+          <div class="members-panel" *ngIf="showMembersPanel">
+            <h3>Thành viên ({{ members.length }})</h3>
+            <div class="member-row" *ngFor="let mem of members">
+              <div class="member-avatar" [style.background]="getAvatarColor(mem.name)">
+                {{ getInitials(mem.name) }}
+              </div>
+              <span class="member-name">{{ mem.name }}<span class="admin-badge" *ngIf="mem.isAdmin" title="Quản trị viên">👑</span></span>
+            </div>
+          </div>
+
+          <!-- Thông báo tin nhắn mới (chỉ khi đang lướt lên đọc lại, ở góc trên-phải KHUNG CHAT) -->
+          <div class="new-message-banner" *ngIf="newMessageBannerVisible" (click)="scrollToBottomAndDismissBanner()">
+            <span>{{ newMessageCount }} tin nhắn mới</span>
+            <span class="new-message-arrow">↓</span>
+          </div>
+        </div>
+
+        <!-- Ô soạn tin nhắn -->
+        <div class="composer">
+          <div class="reply-banner" *ngIf="replyingTo">
+            <div class="reply-banner-body">
+              <span class="reply-banner-label">Trả lời {{ replyingTo.userName }}</span>
+              <span class="reply-banner-text">{{ replyingTo.hasImage ? '📷 ' : '' }}{{ replyingTo.text }}</span>
+            </div>
+            <button class="reply-banner-close" (click)="cancelReply()">✕</button>
+          </div>
+
+          <div class="pending-image" *ngIf="pendingImage">
+            <img [src]="pendingImage" alt="Ảnh sắp gửi" />
+            <button class="pending-image-close" (click)="removePendingImage()">✕</button>
+          </div>
+
+          <div class="composer-box">
+            <div
+              #messageInputEl
+              class="composer-input"
+              contenteditable="true"
+              (keydown)="onMessageKeydown($event)"
+              (paste)="onComposerPaste($event)"
+              (input)="onComposerInput()"
+              data-placeholder="Type a message"
+            ></div>
+            <button class="send-btn" (click)="sendMessage()" [disabled]="!hasComposerContent && !pendingImage">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
+            </button>
+          </div>
+        </div>
+      </ng-container>
+
+      <ng-template #noChannelSelected>
+        <div class="no-channel-state">
+          <p>Chọn hoặc tạo một phòng để bắt đầu trò chuyện</p>
+          <p class="hint">Bấm vào nút tròn ở góc dưới bên phải</p>
+        </div>
+      </ng-template>
+
+      <!-- ===== FAB — thay cho sidebar: danh sách phòng + tạo phòng + tiện ích ===== -->
+      <div class="room-fab-anchor">
+        <div class="room-fab-panel" *ngIf="fabOpen">
+          <div class="fab-panel-header">
+            <h3>Phòng chat</h3>
+            <button class="icon-btn" title="Tạo phòng mới" (click)="openCreateChannelModal()">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5z"/></svg>
+            </button>
+          </div>
+
+          <div class="fab-panel-search">
+            <input type="text" [(ngModel)]="channelSearch" placeholder="Tìm phòng..." />
+          </div>
+
+          <div class="fab-panel-list">
+            <div
+              class="channel-item"
+              *ngFor="let ch of filteredChannels"
+              [class.active]="ch.id === currentChannelId"
+              (click)="onChannelClick(ch)"
+            >
+              <div class="channel-hash">#</div>
+              <div class="channel-info">
+                <div class="channel-name-row" style="justify-content: space-between;">
+                  <div style="display: flex; align-items: baseline; gap: 5px;">
+                    <span class="channel-name">{{ ch.name }}</span>
+                    <svg class="lock-icon" viewBox="0 0 24 24" width="10" height="10" fill="currentColor" *ngIf="ch.hasPassword"><path d="M12 17a2 2 0 002-2 2 2 0 00-2-2 2 2 0 00-2 2 2 2 0 002 2zm6-9a2 2 0 012 2v10a2 2 0 01-2 2H6a2 2 0 01-2-2V10a2 2 0 012-2h1V6a5 5 0 0110 0v2h1zm-6-5a3 3 0 00-3 3v2h6V6a3 3 0 00-3-3z"/></svg>
+                  </div>
+                  
+                  <!-- NÚT XOÁ PHÒNG -->
+                  <button class="delete-channel-btn" title="Xóa phòng này" (click)="deleteChannel($event, ch.id, ch.name)">🗑️</button>
+                </div>
+              </div>
+              <div class="channel-member-count">{{ ch.memberCount }}</div>
+            </div>
+
+            <div class="channel-empty" *ngIf="!filteredChannels.length">
+              {{ channels.length === 0 ? 'Chưa có phòng nào.' : 'Không tìm thấy phòng nào' }}
+            </div>
+          </div>
+
+          <div class="fab-panel-utilities">
+            <button class="utility-btn" [disabled]="!currentChannelId" (click)="leaveCurrentChannel()">
+              🚪 Rời phòng hiện tại
+            </button>
+          </div>
+        </div>
+
+        <button class="room-fab" (click)="toggleFab()" [class.open]="fabOpen">
+          <svg *ngIf="!fabOpen" viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M4 4h16v12H7l-3 3V4z"/></svg>
+          <span *ngIf="fabOpen">✕</span>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== MODAL TẠO PHÒNG MỚI (bắt buộc mật khẩu) ===== -->
+<div class="modal-overlay" *ngIf="showCreateChannelModal" (click)="closeCreateChannelModal()">
+  <div class="modal-card" (click)="$event.stopPropagation()">
+    <h2>Tạo phòng mới</h2>
+    <input
+      type="text"
+      [(ngModel)]="newChannelName"
+      placeholder="Tên phòng..."
+      maxlength="50"
+      autofocus
+    />
+    <input
+      type="password"
+      [(ngModel)]="newChannelPassword"
+      (keydown.enter)="submitCreateChannel()"
+      placeholder="Đặt mật khẩu cho phòng..."
+      maxlength="50"
+      class="modal-input-spacing"
+    />
+    <div class="modal-actions">
+      <button class="btn-cancel" (click)="closeCreateChannelModal()">Hủy</button>
+      <button class="btn-confirm" (click)="submitCreateChannel()" [disabled]="!newChannelName.trim() || !newChannelPassword.trim()">Tạo phòng</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== MODAL NHẬP MẬT KHẨU ĐỂ VÀO PHÒNG ===== -->
+<div class="modal-overlay" *ngIf="passwordPromptChannelId" (click)="closePasswordPrompt()">
+  <div class="modal-card" (click)="$event.stopPropagation()">
+    <h2>🔒 {{ passwordPromptChannelName }}</h2>
+    <input
+      type="password"
+      [(ngModel)]="passwordPromptInput"
+      (keydown.enter)="submitPasswordPrompt()"
+      placeholder="Nhập mật khẩu phòng..."
+      autofocus
+    />
+    <p class="modal-error" *ngIf="passwordPromptError">{{ passwordPromptError }}</p>
+    <div class="modal-actions">
+      <button class="btn-cancel" (click)="closePasswordPrompt()">Hủy</button>
+      <button class="btn-confirm" (click)="submitPasswordPrompt()" [disabled]="!passwordPromptInput.trim()">Vào phòng</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== XEM ẢNH PHÓNG TO ===== -->
+<div class="image-viewer-overlay" *ngIf="viewerImage" (click)="closeImageViewer()">
+  <div class="viewer-toolbar" (click)="$event.stopPropagation()">
+    <button (click)="zoomOut()" title="Thu nhỏ">−</button>
+    <span class="viewer-zoom-level">{{ (viewerScale * 100).toFixed(0) }}%</span>
+    <button (click)="zoomIn()" title="Phóng to">+</button>
+    <button (click)="resetZoom()" title="Về mặc định">Reset</button>
+    <button class="viewer-close" (click)="closeImageViewer()" title="Đóng (Esc)">✕</button>
+  </div>
+  <div class="viewer-canvas" (click)="$event.stopPropagation()">
+    <img
+      [src]="viewerImage"
+      class="viewer-image"
+      [style.transform]="'translate(' + viewerOffsetX + 'px, ' + viewerOffsetY + 'px) scale(' + viewerScale + ')'"
+      (wheel)="onViewerWheel($event)"
+      (mousedown)="onViewerMouseDown($event)"
+      draggable="false"
+      alt="Ảnh phóng to"
+    />
+  </div>
+</div>
